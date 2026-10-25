@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Cairo — seu espaço de inteligência</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/voice.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Conversas">
+      <a class="brand" href="/" aria-label="Cairo início"><span class="brand-mark">C</span><span>cairo<span class="brand-dot">.</span></span></a>
+      <div class="brand-caption">INTELIGÊNCIA, DO SEU JEITO.</div>
+      <button class="new-chat" id="new-chat"><span aria-hidden="true">＋</span> Nova conversa <span class="key-hint">N</span></button>
+      <div class="section-label">SEU ESPAÇO <span>LOCAL</span></div>
+      <nav id="sessions" class="session-list" aria-label="Histórico de conversas"></nav>
+      <details class="daily-tools"><summary>Ferramentas do dia a dia</summary>
+<button type="button" id="export-chat">Exportar conversa</button>
+<label><input type="checkbox" id="speak-replies"> Ler novas respostas em voz alta</label>
+<button type="button" id="stop-speaking">Parar voz</button>
+<form id="reminder-form"><label>Lembrete<input id="reminder-text" maxlength="1000" required placeholder="Ex.: Fazer uma pausa"></label><label>Quando<input id="reminder-due" type="datetime-local" required></label><button type="submit">Salvar lembrete</button></form>
+<p id="reminder-status" role="status"></p><div id="reminders"></div><p>Alertas aparecem com Cairo aberto. Atrasados reaparecem ao voltar.</p>
+</details><div class="sidebar-bottom">
+        <div class="local-state"><span class="connection-dot" id="connection-dot"></span><span id="connection">Conectando…</span><span class="version">V0.3</span></div>
+        <div class="model-label" id="model-label">Carregando configuração</div>
+        <div class="permission-label" id="permission-label"></div>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="separator">/</span><span id="chat-title">Nova conversa</span></div><button type="button" class="team-toggle" id="team-toggle" aria-controls="activity-panel" aria-expanded="false">Equipe</button><span class="private-badge"><span aria-hidden="true">◈</span> Interface local</span></header>
+      <div class="demo-banner" id="demo-banner" hidden><span class="demo-tag">DEMO</span> Comandos de aplicativos funcionam sem IA. Para conversas livres, conecte Ollama ou um provedor compatível.</div>
+      <div class="error-banner" id="error-banner" role="alert" hidden></div>
+      <section class="conversation" id="conversation" aria-label="Conversa">
+        <div class="welcome" id="welcome">
+          <div class="eyebrow"><span></span> UM PONTO DE PARTIDA. MUITAS POSSIBILIDADES.</div>
+          <h1>Menos tarefas soltas.<br><span>Mais espaço para criar.</span></h1>
+          <p>Converse com Cairo. Organize ideias, explore seu workspace<br class="desktop-br"> e reúna agentes para trabalhar em um mesmo objetivo.</p>
+          <div class="prompt-grid">
+            <button class="prompt-card" data-prompt="Liste os arquivos do meu workspace e explique por onde começar."><span class="prompt-icon">⌘</span><strong>Conhecer meu projeto</strong><span>Explore os arquivos do workspace.</span><span class="card-arrow">↗</span></button>
+            <button class="prompt-card" data-prompt="Abra o Google Chrome e abra o YouTube Music."><span class="prompt-icon">◇</span><strong>Abrir meus aplicativos</strong><span>Chrome e YouTube Music por comando.</span><span class="card-arrow">↗</span></button>
+            <button class="prompt-card" data-prompt="Use os subagentes para analisar meu workspace, identificar oportunidades e revisar uma proposta de próximos passos." data-mode="swarm"><span class="prompt-icon">⌁</span><strong>Reunir os agentes</strong><span>Perspectivas diferentes. Um objetivo.</span><span class="card-arrow">↗</span></button>
+          </div>
+        </div>
+        <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+      </section>
+      <div class="composer-area">
+        <div class="mode-row"><div class="mode-switch" role="group" aria-label="Modo de execução"><button id="mode-normal" class="mode active" aria-pressed="true" data-mode="normal">◈ &nbsp;Direto</button><button id="mode-swarm" class="mode" aria-pressed="false" data-mode="swarm">⌁ &nbsp;Multiagente</button></div><span id="mode-help">Master → ferramentas</span></div>
+        <form class="composer" id="chat-form"><label class="sr-only" for="message">Sua mensagem para Cairo</label><textarea id="message" rows="2" maxlength="16000" placeholder="O que vamos construir hoje?" required></textarea><div class="composer-footer"><span>Enter para enviar <span class="footer-divider">·</span> Shift + Enter para nova linha</span><button id="microphone" class="microphone-button" type="button" aria-label="Falar pelo microfone" aria-pressed="false">Microfone</button><button id="cancel" class="cancel-button" type="button" hidden>Parar</button><button id="send" class="send-button" type="submit" aria-label="Enviar mensagem">↑</button></div></form>
+        <div class="voice-options"><button id="open-mic" type="button" class="microphone-button" aria-pressed="false">Escuta contínua</button><span id="open-mic-status" role="status">Escuta contínua desligada</span></div><div class="voice-options"><label><input id="voice-auto-send" type="checkbox"> Enviar ao terminar de falar</label><span id="voice-status" role="status">Microfone desligado</span></div><div class="voice-help" id="voice-help">Escuta contínua envia cada frase automaticamente após uma pausa. Aguarde “Ouvindo” para o próximo comando. Pare no botão ou diga “parar escuta”. O navegador pode enviar áudio ao serviço de reconhecimento.</div>
+        <div class="composer-note">Seu histórico fica nesta máquina. O provedor escolhido recebe o contexto necessário para responder.</div>
+      </div>
+    </main>
+    <aside class="activity-panel" id="activity-panel" aria-label="Atividade dos agentes"><div class="activity-heading"><div><div class="section-label">NOS BASTIDORES</div><h2>Sua equipe</h2></div><span class="team-count">05</span><button type="button" class="team-close" id="team-close" aria-label="Fechar painel da equipe">×</button></div><p class="activity-intro">Acompanhe quem está trabalhando e cada etapa da execução.</p><div class="run-summary"><span class="run-dot" id="run-dot"></span><span id="run-status" role="status">Pronto para começar</span></div><div class="agent-list" id="agents"></div><div class="trace-heading"><span class="section-label">REGISTRO DE EXECUÇÃO</span><span id="event-count">0 eventos</span></div><ol class="event-list" id="events"><li class="event-empty">As etapas aparecem aqui quando você envia uma mensagem.</li></ol><div class="activity-footnote">Uma execução rastreável, do pedido à resposta.</div></aside>
+  </div>
+</body>
+</html>

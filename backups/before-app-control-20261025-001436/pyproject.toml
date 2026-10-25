@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cairo-assistant"
+version = "0.3.0"
+description = "Cairo: modular local personal AI workspace"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+browser = ["playwright>=1.49,<2"]
+
+[project.scripts]
+cairo = "cairo.__main__:main"
+cairo-desktop = "cairo.desktop:main"
+
+[tool.setuptools.packages.find]
+include = ["cairo*"]
+
+[tool.setuptools.package-data]
+"cairo.web" = ["*.html", "*.css", "*.js"]
+"cairo.skills" = ["*.md", "**/*.md"]
+
+"cairo.config" = ["*.json"]

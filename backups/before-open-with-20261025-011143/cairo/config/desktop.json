@@ -1,0 +1,14 @@
+{
+  "apps": {
+    "chrome": {"label": "Google Chrome", "aliases": ["chrome", "google chrome", "navegador"], "paths": ["%ProgramFiles%/Google/Chrome/Application/chrome.exe", "%ProgramFiles(x86)%/Google/Chrome/Application/chrome.exe", "%LOCALAPPDATA%/Google/Chrome/Application/chrome.exe"]},
+    "edge": {"label": "Microsoft Edge", "aliases": ["edge", "microsoft edge"], "paths": ["%ProgramFiles(x86)%/Microsoft/Edge/Application/msedge.exe", "%ProgramFiles%/Microsoft/Edge/Application/msedge.exe"]},
+    "notepad": {"label": "Bloco de Notas", "aliases": ["bloco de notas", "notepad"], "paths": ["%SystemRoot%/System32/notepad.exe"]},
+    "calculator": {"label": "Calculadora", "aliases": ["calculadora", "calc"], "paths": ["%SystemRoot%/System32/calc.exe"]},
+    "explorer": {"label": "Explorador de Arquivos", "aliases": ["explorador de arquivos", "explorador", "explorer"], "paths": ["%SystemRoot%/explorer.exe"]}
+  },
+  "sites": {
+    "youtube_music": {"label": "YouTube Music", "aliases": ["youtube music", "youtube musica", "yt music"], "url": "https://music.youtube.com"},
+    "youtube": {"label": "YouTube", "aliases": ["youtube"], "url": "https://www.youtube.com"},
+    "google": {"label": "Google", "aliases": ["google"], "url": "https://www.google.com"}
+  }
+}
