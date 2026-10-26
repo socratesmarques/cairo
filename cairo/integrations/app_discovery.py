@@ -233,3 +233,33 @@ def find_app(name: str) -> InstalledApp:
     raise FileNotFoundError(
         "Aplicativo não encontrado. Liste os aplicativos instalados ou informe o caminho completo do .exe."
     )
+
+
+def window_identity(installed: InstalledApp):
+    from cairo.integrations.window_native import WindowTarget
+
+    if installed.kind == "exe":
+        return WindowTarget(label=installed.label, executable=str(Path(installed.target).resolve()))
+    executable = ""
+    com = None
+    folder = item = None
+    try:
+        import pythoncom
+        from win32com.client import Dispatch
+
+        pythoncom.CoInitialize()
+        com = pythoncom
+        folder = Dispatch("Shell.Application").Namespace("shell:AppsFolder")
+        item = folder.ParseName(installed.target) if folder is not None else None
+        value = item.ExtendedProperty("System.Link.TargetParsingPath") if item is not None else None
+        if isinstance(value, str):
+            path = Path(os.path.expandvars(value))
+            if path.is_absolute() and path.suffix.casefold() == ".exe" and path.is_file():
+                executable = str(path.resolve())
+    except Exception:
+        pass  # Missing shell metadata does not justify guessing another process by its title.
+    finally:
+        item = folder = None
+        if com:
+            com.CoUninitialize()
+    return WindowTarget(label=installed.label, executable=executable, app_id=installed.target)

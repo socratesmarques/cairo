@@ -87,7 +87,9 @@ class Orchestrator:
         with self.lock:
             if self.closed:
                 raise RuntimeError("Cairo está encerrando")
-            self.memory.session(session_id)
+            session = self.memory.session(session_id)
+            if session.get("archived"):
+                raise RuntimeError("Restaure a conversa arquivada antes de enviar mensagens")
             if len(self.active) >= 4:
                 raise RuntimeError("Limite de quatro execuções simultâneas atingido")
             if any(s == session_id for s, _ in self.active.values()):

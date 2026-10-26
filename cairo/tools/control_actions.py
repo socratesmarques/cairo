@@ -98,6 +98,8 @@ INTERACTIONS = frozenset(
         "app_keys",
         "browser_click",
         "browser_play_music",
+        "desktop_play_music",
+        "window_action",
         "browser_fill",
         "browser_select",
         "browser_keys",

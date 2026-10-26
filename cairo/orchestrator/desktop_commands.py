@@ -8,6 +8,8 @@ from cairo.integrations.desktop_control import catalog
 from cairo.integrations.folders import ALIASES
 from cairo.orchestrator.control_commands import parse_command
 from cairo.orchestrator.file_commands import parse_file_command
+from cairo.orchestrator.window_commands import parse_window_command
+from cairo.orchestrator.productivity_commands import parse_productivity
 
 
 def normalize(text: str) -> str:
@@ -21,11 +23,14 @@ def normalize(text: str) -> str:
 def parse_desktop_commands(
     message: str, *, discover_apps: bool = False
 ) -> list[tuple[str, dict]] | None:
+    daily = parse_productivity(message)
+    if daily:
+        return daily
     command = parse_command(message)
     if command:
         return [("run_command", command)]
     music_request = re.fullmatch(
-        r"(?:cairo[, ]+)?(?:(?:abra|abrir) (?:o )?youtube music e )?(?:toque|tocar|reproduza|reproduzir)\s+(.+?)(?:\s+no youtube music)?[.!]?",
+        r"(?:cairo[, ]+)?(?:(?:abra|abrir|abre) (?:o )?youtube music(?P<desktop> desktop(?: app)?)? e )?(?:toque|tocar|reproduza|reproduzir)\s+(?:a m[uú]sica\s+)?(?P<query>.+?)(?:\s+no youtube music(?P<desktop_tail> desktop(?: app)?)?)?[.!]?",
         message.strip(),
         re.I,
     )
@@ -33,10 +38,14 @@ def parse_desktop_commands(
         music_request
         and normalize(message.strip()).rstrip(".!?") != "reproduza ou pause a musica"
     ):
-        query = music_request[1].strip().strip('"')
+        query = music_request["query"].strip().strip('"')
         if normalize(query) in {"uma musica", "musica", "alguma musica"}:
             query = "música"
-        return [("browser_play_music", {"query": query})]
+        tool = "desktop_play_music" if music_request["desktop"] or music_request["desktop_tail"] else "browser_play_music"
+        return [(tool, {"query": query})]
+    layout = parse_window_command(message, discover_apps=discover_apps)
+    if layout:
+        return layout
     raw_control = re.sub(r"^cairo[, ]+", "", message.strip(), flags=re.I)
     if normalize(raw_control).rstrip(".!?") in {
         "liste as janelas",

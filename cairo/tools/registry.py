@@ -22,6 +22,8 @@ from cairo.tools.control_actions import APP_ACTIONS, BROWSER_ACTIONS, INTERACTIO
 from cairo.tools.file_actions import MUTATIONS, OPERATIONS
 from cairo.tools.file_actions import dispatch as dispatch_file
 from cairo.tools.files import search_files
+from cairo.tools.productivity_actions import PRODUCTIVITY
+from cairo.memory.productivity import Productivity
 
 MAX_FILE_BYTES = 64 * 1024
 MAX_ENTRIES = 200
@@ -55,6 +57,8 @@ _DESKTOP_TOOLS = frozenset(
         "open_site",
         "search_music",
         "window_action",
+        "desktop_monitors",
+        "desktop_play_music",
         "search_web",
         "open_folder",
         "open_url",
@@ -191,6 +195,7 @@ _SCHEMAS = {
         {"id": {"type": "string"}},
         ["id"],
     ),
+    "reminder_snooze": _schema("reminder_snooze", "Snooze a pending reminder in this conversation by an integer number of minutes (1 to 527040).", {"id": {"type": "string"}, "minutes": {"type": "integer"}}, ["id", "minutes"]),
     "desktop_apps": _schema(
         "desktop_apps",
         "List available applications and sites, including installed Windows apps when discovery is enabled. Optional query filters the catalog.",
@@ -215,12 +220,21 @@ _SCHEMAS = {
         {"query": {"type": "string"}, "browser": {"type": "string"}},
         ["query"],
     ),
+    "desktop_play_music": _schema(
+        "desktop_play_music",
+        "Find a song and request playback in the installed YouTube Music Desktop App using its registered ytmd protocol. Requires explicit playback request; does not claim playback was verified.",
+        {"query": {"type": "string"}},
+        ["query"],
+    ),
     "window_action": _schema(
         "window_action",
-        "Change the topmost matching app window: minimize, maximize, restore, focus.",
-        {"app": {"type": "string"}, "action": {"type": "string"}},
+        "Position an installed app, local exe or win:HWND:PID window. Actions: snap_left/right/top/bottom/top_left/top_right/bottom_left/bottom_right, center, custom, minimize, maximize, restore, focus. Optional monitor is 1-based (primary first). custom uses integer x,y,width,height; pixels are absolute screen coordinates, percent is relative to monitor work area. Verifies placement; reports minimum-size adjustments.",
+        {"app": {"type": "string"}, "action": {"type": "string"},
+         "monitor": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"},
+         "width": {"type": "integer"}, "height": {"type": "integer"}, "unit": {"type": "string"}},
         ["app", "action"],
     ),
+    "desktop_monitors": _schema("desktop_monitors", "List monitors with stable ordering for this configuration: primary first, then screen position; includes work areas in screen pixels.", {}, []),
     "list_files": _schema(
         "list_files",
         "List at most 200 immediate workspace directory entries.",
@@ -269,6 +283,10 @@ _SCHEMAS = {
     ),
 }
 _SCHEMAS.update(
+    {name: _schema(name, description, {key: {"type": kind} for key, kind in fields.items()}, required)
+     for name, (description, fields, required) in PRODUCTIVITY.items()}
+)
+_SCHEMAS.update(
     {
         name: _schema(
             name,
@@ -310,6 +328,7 @@ _ALLOW = {
             "reminder_create",
             "reminder_list",
             "reminder_dismiss",
+            "reminder_snooze",
             "local_time",
             "capabilities",
         }
@@ -334,6 +353,7 @@ _ALLOW["ResearchAgent"] |= {
     "browser_scroll",
 }
 _ALLOW["SystemAgent"] |= frozenset(OPERATIONS)
+_ALLOW["SystemAgent"] |= frozenset(PRODUCTIVITY)
 _ALLOW["DeveloperAgent"] |= frozenset(OPERATIONS) - {
     "file_trash",
     "file_restore",
@@ -377,6 +397,7 @@ class ToolRegistry:
     ) -> None:
         self.policy = WorkspacePolicy(workspace, allow_write)
         self.memory = memory
+        self._productivity = None
         self.desktop = DesktopController(allow_desktop, discover_apps)
         self.weather_city = weather_city
         self.allow_personal_files = allow_personal_files
@@ -401,6 +422,13 @@ class ToolRegistry:
         self.app_control = None
         self.browser_control = None
         self.control_lock = threading.Lock()
+
+    @property
+    def productivity(self):
+        with self.control_lock:
+            if self._productivity is None:
+                self._productivity = Productivity(self.memory)
+            return self._productivity
 
     def schemas(
         self,
@@ -438,6 +466,7 @@ class ToolRegistry:
                     )
                     and (name not in {"open_app", "open_file"} or allow_app_launch)
                     and (name not in _DESKTOP_TOOLS or self.desktop.enabled)
+                    and (name != "desktop_play_music" or self.allow_network)
                     and (name not in _PERSONAL_TOOLS or self.allow_personal_files)
                     and (name not in _NETWORK_TOOLS or self.allow_network)
                     and (name not in OPERATIONS or self.files.enabled)
@@ -514,7 +543,10 @@ class ToolRegistry:
                 raise ValueError("Required tool argument is missing")
             for key, value in arguments.items():
                 expected = specification["properties"][key]["type"]
-                if not isinstance(value, str if expected == "string" else bool):
+                valid = ((expected == "string" and isinstance(value, str))
+                         or (expected == "integer" and type(value) is int)
+                         or (expected == "boolean" and type(value) is bool))
+                if not valid:
                     raise ValueError(f"Invalid type for {key}")
             if name == "run_command":
                 result = self.commands.run(**arguments, cancelled=cancelled)
@@ -531,6 +563,15 @@ class ToolRegistry:
             )
 
     def _dispatch(self, name: str, args: dict[str, Any], session_id: str) -> Any:
+        if name in PRODUCTIVITY:
+            return self.productivity.call(name, args, session_id)
+        if name == "desktop_play_music":
+            if not self.allow_network:
+                raise PermissionError("Pesquisa de músicas na rede desativada")
+            self.desktop.require_enabled()
+            from cairo.integrations.desktop_music import play_music
+
+            return play_music(args["query"])
         if name in APP_ACTIONS:
             if not self.allow_app_control:
                 raise PermissionError("Controle UI de aplicativos desativado")
@@ -577,6 +618,7 @@ class ToolRegistry:
             return dispatch_file(self.files, name, args, session_id)
         if name == "capabilities":
             functions = [
+                "Central do dia por conversa: tarefas com prioridade e prazo, notas editáveis e pesquisáveis, foco com pausa/retomada, calculadora, conversão de unidades e ferramentas de texto locais.",
                 "Conversar com o modelo configurado; modos normal e swarm com revisão.",
                 "Guardar conversas e notas por sessão; criar lembretes exibidos com a interface aberta.",
                 "Ler, listar e buscar arquivos do workspace; informar data e hora.",
@@ -632,7 +674,7 @@ class ToolRegistry:
                 )
             limits = [
                 "A leitura web não usa logins do Chrome pessoal nem contorna CAPTCHA; verificações do Google precisam de interação na janela de pesquisa.",
-                "Controles de mídia dependem do aplicativo ativo; escolher e tocar uma faixa ainda exige interação na página.",
+                "Controles de mídia dependem do aplicativo; pedidos de reprodução não confirmam que o áudio começou.",
                 "Automação depende dos controles expostos pelo aplicativo; não há integração com iPhone nem reconhecimento de voz offline.",
                 "A escuta contínua depende da página aberta e pausa durante execução e fala; não existe palavra de ativação.",
             ]
@@ -717,6 +759,8 @@ class ToolRegistry:
                     )
                     or "Nenhum lembrete pendente.",
                 }
+            if name == "reminder_snooze":
+                return reminders.snooze(args["id"], session_id, args["minutes"])
             return reminders.dismiss(args["id"], session_id)
         if name == "list_files":
             directory = self.policy.resolve(args.get("path", "."))

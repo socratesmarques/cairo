@@ -1,5 +1,29 @@
 # Cairo
 
+## Novidades — versão 0.8
+
+A **Central do dia** reúne tarefas com prioridade e prazo, notas editáveis, agenda com adiamento, temporizador de foco persistente, calculadora, conversão de unidades e ferramentas de texto. Abra pela barra lateral; **Explorar comandos** mostra exemplos pesquisáveis. As funções locais funcionam sem IA e os dados ficam separados por conversa.
+
+Exemplos: Adicione tarefa: Revisar orçamento, Meu dia, Salve nota Ideias: Preparar uma apresentação, Inicie foco de 25 minutos, Calcule (150 + 35) * 2, Converta 2,5 km para m. Veja [o guia da versão 0.8](docs/daily-0.8.md) para limites, exportação e alertas.
+
+
+**Atualização 0.7:** posicionamento geral de aplicativos instalados, incluindo
+apps da Store, nos quatro lados, cantos, centro, monitores e coordenadas.
+Veja [os comandos de janelas](docs/windows-0.7.md).
+
+**Correção 0.6.1:** comandos de música no aplicativo desktop, abrir e posicionar
+janelas à direita/esquerda e continuidade da escuta após erros de execução.
+Veja [os exemplos e limites](docs/desktop-0.6.1.md).
+
+**Atualização 0.6:** carregamento do histórico antigo na conversa, importação de
+JSON, restauração verificável de backups e correções de rascunhos e estado entre
+abas. Consulte [as novidades e instruções](docs/daily-0.6.md).
+
+**Atualização 0.5:** temas claro/escuro, histórico pesquisável pelo conteúdo,
+conversas fixadas e arquivadas, rascunhos por conversa, respostas formatadas,
+exportação completa e cópia verificável do histórico. Consulte
+[o guia de uso diário](docs/daily-0.5.md).
+
 **Atualização 0.4:** diagnóstico local, aviso de reinicialização pendente, atalhos
 pessoais, copiar/reutilizar pedidos e health checks de modelos. Consulte
 [a revisão completa e os limites](docs/review-0.4.md).

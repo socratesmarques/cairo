@@ -39,3 +39,18 @@ class Reminders:
             if not cursor.rowcount:
                 raise KeyError("Lembrete não encontrado nesta conversa")
         return {"dismissed": True}
+
+    def snooze(self, reminder_id, session_id, minutes):
+        if type(minutes) is not int or not 1 <= minutes <= 527040:
+            raise ValueError("Adiamento deve ser de 1 minuto a 366 dias")
+        with self.memory.db() as db:
+            row = db.execute("SELECT due FROM reminders WHERE id=? AND session_id=? AND status='pending'", (reminder_id, session_id)).fetchone()
+            if not row:
+                raise KeyError("Lembrete não encontrado nesta conversa")
+            current = datetime.now(timezone.utc)
+            moment = max(current, datetime.fromisoformat(row["due"]).astimezone(timezone.utc)) + timedelta(minutes=minutes)
+            if moment > current + timedelta(days=366):
+                raise ValueError("O novo horário deve estar dentro de um ano")
+            due = moment.isoformat()
+            db.execute("UPDATE reminders SET due=? WHERE id=? AND session_id=? AND status='pending'", (due, reminder_id, session_id))
+        return {"id": reminder_id, "due": due, "message": f"Lembrete adiado por {minutes} minutos."}

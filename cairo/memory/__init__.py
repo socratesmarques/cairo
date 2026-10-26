@@ -3,6 +3,7 @@
 import sqlite3
 import threading
 import uuid
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,12 @@ class Memory:
                 CREATE INDEX IF NOT EXISTS event_run ON events(run_id,id);
                 CREATE INDEX IF NOT EXISTS note_session ON notes(session_id,id);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "pinned" not in columns and db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone():
+                self.backup()
+            for name in ("pinned", "archived"):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE sessions ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
 
     def recover_interrupted(self) -> None:
         with self.db() as db:
@@ -50,6 +57,10 @@ class Memory:
         with self.lock:
             db = sqlite3.connect(self.path, timeout=10)
             db.row_factory = sqlite3.Row
+            db.create_function("search_fold", 1, lambda value: "".join(
+                c for c in unicodedata.normalize("NFKD", str(value or "").casefold())
+                if not unicodedata.combining(c)
+            ), deterministic=True)
             try:
                 yield db
                 db.commit()
@@ -62,17 +73,93 @@ class Memory:
     def create_session(self) -> dict:
         item = {"id": uuid.uuid4().hex, "title": "Nova conversa", "created_at": now()}
         with self.db() as db:
-            db.execute("INSERT INTO sessions VALUES(:id,:title,:created_at)", item)
+            db.execute("INSERT INTO sessions(id,title,created_at) VALUES(:id,:title,:created_at)", item)
         return item
 
-    def sessions(self) -> list:
+    def sessions(self, query: str = "", archived: bool = False, offset: int = 0) -> list:
+        if not isinstance(query, str) or len(query) > 200:
+            raise ValueError("Busca deve conter até 200 caracteres")
+        if type(offset) is not int or not 0 <= offset <= 1000000:
+            raise ValueError("Página de conversas inválida")
         with self.db() as db:
             return [
                 dict(row)
                 for row in db.execute(
-                    "SELECT * FROM sessions ORDER BY created_at DESC LIMIT 200"
+                    "SELECT s.* FROM sessions s WHERE archived=? AND "
+                    "(?='' OR instr(search_fold(title),search_fold(?))>0 OR EXISTS "
+                    "(SELECT 1 FROM messages m WHERE m.session_id=s.id AND instr(search_fold(m.content),search_fold(?))>0)) "
+                    "ORDER BY pinned DESC,MAX(s.created_at,COALESCE((SELECT MAX(created_at) FROM messages WHERE session_id=s.id),s.created_at)) DESC,s.id DESC LIMIT 200 OFFSET ?",
+                    (int(archived), query.strip(), query.strip(), query.strip(), offset),
                 )
             ]
+
+    def backup(self) -> dict:
+        directory = self.path.parent / "backups"
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / ("cairo-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8] + ".sqlite3")
+        temporary = destination.with_suffix(".tmp")
+        try:
+            with self.db() as source:
+                target = sqlite3.connect(temporary)
+                try:
+                    source.backup(target)
+                    if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise OSError("Não foi possível verificar a cópia do histórico")
+                finally:
+                    target.close()
+            temporary.replace(destination)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        return {"path": str(destination.resolve()), "bytes": destination.stat().st_size}
+
+    def update_session(self, session_id: str, changes: dict) -> dict:
+        if not changes or set(changes) - {"title", "pinned", "archived"}:
+            raise ValueError("Informe título, fixação ou arquivamento")
+        values = dict(changes)
+        if "title" in values:
+            title = values["title"]
+            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 100:
+                raise ValueError("Título deve conter de 1 a 100 caracteres")
+            values["title"] = title.strip()
+        for key in ("pinned", "archived"):
+            if key in values and not isinstance(values[key], bool):
+                raise ValueError("Fixação e arquivamento devem ser booleanos")
+        with self.db() as db:
+            if values.get("archived") and db.execute(
+                "SELECT 1 FROM runs WHERE session_id=? AND status IN ('queued','running')",
+                (session_id,),
+            ).fetchone():
+                raise RuntimeError("Aguarde a execução terminar antes de arquivar")
+            cursor = db.execute(
+                "UPDATE sessions SET " + ",".join(f"{key}=?" for key in values) + " WHERE id=?",
+                (*values.values(), session_id),
+            )
+            if not cursor.rowcount:
+                raise KeyError("Conversa não encontrada")
+            return dict(db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone())
+
+    def export_session(self, session_id: str) -> dict:
+        with self.db() as db:
+            row = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if row is None:
+                raise KeyError("Conversa não encontrada")
+            result = dict(row)
+            result["messages"] = [dict(r) for r in db.execute(
+                "SELECT * FROM messages WHERE session_id=? ORDER BY id", (session_id,)
+            )]
+            result["notes"] = [dict(r) for r in db.execute(
+                "SELECT * FROM notes WHERE session_id=? ORDER BY id", (session_id,)
+            )]
+            result["runs"] = [dict(r) for r in db.execute(
+                "SELECT * FROM runs WHERE session_id=? ORDER BY created_at", (session_id,)
+            )]
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if {"daily_tasks", "daily_notes"} <= tables:
+                result["daily"] = {key: [dict(r) for r in db.execute(
+                    f"SELECT * FROM {table} WHERE session_id=? ORDER BY updated,id", (session_id,)
+                )] for key, table in (("tasks", "daily_tasks"), ("notes", "daily_notes"))}
+            return result
 
     def session(self, session_id: str) -> dict:
         with self.db() as db:
@@ -82,6 +169,9 @@ class Memory:
             if row is None:
                 raise KeyError("Conversa não encontrada")
             result = dict(row)
+            result["message_count"] = db.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id=?", (session_id,)
+            ).fetchone()[0]
             result["messages"] = [
                 dict(r)
                 for r in db.execute(
@@ -97,6 +187,23 @@ class Memory:
                 )
             ]
             return result
+
+    def older_messages(self, session_id: str, before: int, limit: int = 100) -> dict:
+        if type(before) is not int or before < 1 or type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("Página de mensagens inválida")
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
+                raise KeyError("Conversa não encontrada")
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM messages WHERE session_id=? AND id<? ORDER BY id DESC LIMIT ?",
+                (session_id, before, limit + 1),
+            )]
+            return {"messages": list(reversed(rows[:limit])), "has_more": len(rows) > limit}
+
+    def import_session(self, document: dict) -> dict:
+        from cairo.memory.transfers import import_conversation
+
+        return import_conversation(self, document)
 
     def add_message(self, session_id: str, role: str, content: str) -> None:
         with self.db() as db:

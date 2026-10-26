@@ -10,7 +10,7 @@ const agentDefinitions = [
 ];
 let voice = null;
 let openMic = null;
-const state = { session: null, mode: "normal", sessions: [], runs: new Map(), sending: false, loadVersion: 0 };
+const state = { session: null, mode: "normal", sessions: [], runs: new Map(), sending: false, loadVersion: 0, archived: false, searchVersion: 0, hasMoreSessions: false };
 const terminal = new Set(["completed", "failed", "cancelled"]);
 const labels = { queued: "Aguardando execução", pending: "Aguardando execução", running: "Equipe trabalhando", completed: "Execução concluída", failed: "Execução interrompida por erro", cancelled: "Execução cancelada" };
 
@@ -38,7 +38,7 @@ function setMode(mode) {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
-  $("mode-help").textContent = state.mode === "swarm" ? "Master → subagentes → Reviewer" : "Master → ferramentas";
+  $("mode-help").textContent = state.mode === "swarm" ? "Especialistas trabalham com revisão final" : "Conversa e ações diretas";
 }
 
 function currentRun() { return state.runs.get(state.session?.id); }
@@ -49,8 +49,18 @@ function updateControls() {
   $("new-chat").disabled = state.sending;
   document.querySelectorAll(".session-button").forEach((button) => { button.disabled = state.sending; });
   $("message").disabled = active;
+  $("rename-chat").disabled = !state.session || state.sending;
+  $("pin-chat").disabled = !state.session || state.sending;
+  $("pin-chat").textContent = state.session?.pinned ? "★" : "☆";
+  $("pin-chat").setAttribute("aria-pressed", String(Boolean(state.session?.pinned)));
+  $("archive-chat").disabled = !state.session || active;
+  $("archive-chat").textContent = state.session?.archived ? "Restaurar" : "Arquivar";
+  $("send").disabled = active || Boolean(state.session?.archived);
+  $("message").disabled = active || Boolean(state.session?.archived);
   $("microphone").disabled = Boolean(openMic?.enabled) || !voice?.Recognition || (active && !voice?.active);
+  if (state.session?.archived) $("microphone").disabled = true;
   $("open-mic").disabled = !voice?.Recognition || (!openMic?.enabled && active);
+  if (state.session?.archived) $("open-mic").disabled = true;
   $("voice-auto-send").disabled = Boolean(openMic?.enabled);
   $("cancel").hidden = !currentRun() || terminal.has(currentRun().status);
   document.querySelectorAll(".mode").forEach((button) => { button.disabled = active; });
@@ -58,13 +68,19 @@ function updateControls() {
 
 function renderSessions() {
   $("sessions").replaceChildren();
-  if (!state.sessions.length) $("sessions").append(node("p", "session-empty", "Seu próximo projeto começa com uma conversa."));
+  if (!state.sessions.length) $("sessions").append(node("p", "session-empty", $("session-search").value ? "Nenhuma conversa encontrada." : state.archived ? "Nenhuma conversa arquivada." : "Seu próximo projeto começa com uma conversa."));
   for (const session of state.sessions) {
-    const button = node("button", `session-button${session.id === state.session?.id ? " active" : ""}`, session.title || "Nova conversa");
+    const button = node("button", `session-button${session.id === state.session?.id ? " active" : ""}`, (session.pinned ? "★  " : "") + (session.title || "Nova conversa"));
     button.title = session.title || "Nova conversa";
     if (session.id === state.session?.id) button.setAttribute("aria-current", "page");
     button.addEventListener("click", () => openSession(session.id));
     $("sessions").append(button);
+  }
+  if (state.hasMoreSessions) {
+    const more = node("button", "load-history", "Carregar mais conversas");
+    more.type = "button";
+    more.addEventListener("click", () => loadMoreSessions(more));
+    $("sessions").append(more);
   }
 }
 
@@ -94,18 +110,32 @@ function addMessage(role, content, pending = false) {
     speak.addEventListener("click", () => speakText(content));
     header.append(speak);
   }
-  article.append(header, node("div", "message-content", content));
+  const body = node("div", "message-content");
+  if (role === "assistant" && !pending && globalThis.CairoMarkdown) body.append(CairoMarkdown.render(content));
+  else { body.textContent = content; body.classList.add("plain-text"); }
+  article.append(header, body);
   $("messages").append(article);
 }
 
-function renderMessages() {
+function renderMessages(forceScroll = false) {
+  const pane = $("conversation");
+  const previousScroll = pane.scrollTop;
+  const nearBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 100;
   const messages = (state.session?.messages || []).filter((message) => ["user", "assistant"].includes(message.role));
   $("welcome").hidden = messages.length > 0;
   $("messages").replaceChildren();
   for (const message of messages) addMessage(message.role, message.content);
   const run = currentRun();
   if (run && !terminal.has(run.status)) addMessage("assistant", "Estou trabalhando no seu pedido. Acompanhe as etapas no painel da equipe.", true);
-  $("conversation").scrollTop = $("conversation").scrollHeight;
+  if (state.session?.archived) $("messages").append(node("p", "history-notice", "Conversa arquivada. Use Restaurar para continuar."));
+  if (state.session?.message_count > (state.session?.messages.length || 0)) {
+    const more = node("button", "load-history", "Carregar mensagens anteriores");
+    more.type = "button";
+    more.addEventListener("click", () => loadOlderMessages(more));
+    $("messages").prepend(more);
+  }
+  if (state.session?.message_count > 200) $("messages").prepend(node("p", "history-count", `${state.session.messages.length} de ${state.session.message_count} mensagens carregadas`));
+  pane.scrollTop = !messages.length ? 0 : forceScroll || nearBottom ? pane.scrollHeight : previousScroll;
 }
 
 function normalizedAgent(name) {
@@ -163,12 +193,17 @@ function renderActivity(run) {
 }
 
 async function refreshSessions() {
-  const sessions = await api("/api/sessions");
+  const version = ++state.searchVersion;
+  const sessions = await api("/api/sessions?" + new URLSearchParams({q: $("session-search").value, archived: state.archived ? "1" : "0"}));
+  if (version !== state.searchVersion) return;
   state.sessions = Array.isArray(sessions) ? sessions : sessions.sessions || [];
+  state.hasMoreSessions = state.sessions.length === 200;
+  state.sessionsOffset = state.sessions.length;
   renderSessions();
 }
 
-async function openSession(id) {
+async function openSession(id, restoring = false) {
+  saveDraft();
   openMic?.stop();
   voice?.cancel();
   window.speechSynthesis?.cancel();
@@ -178,34 +213,48 @@ async function openSession(id) {
     const session = await api(`/api/sessions/${encodeURIComponent(id)}`);
     if (version !== state.loadVersion) return;
     state.session = session;
+    if (Boolean(session.archived) !== state.archived) setSessionFilter(Boolean(session.archived));
+    restoreDraft();
+    toggleSidebar(false);
     $("chat-title").textContent = session.title || "Nova conversa";
     try { localStorage.setItem("cairo-session", session.id); } catch (_) { /* Storage may be disabled by browser policy. */ }
     renderSessions();
     const runs = session.runs || [];
     const active = runs.find((run) => !terminal.has(run.status));
     const latest = active || runs[0];
-    if (latest && !state.runs.has(id)) {
+    if (latest) {
       const run = await api(`/api/runs/${encodeURIComponent(latest.id)}`);
       state.runs.set(id, run);
       if (!terminal.has(run.status)) pollRun(id, run.id);
-    }
+    } else state.runs.delete(id);
     if (version !== state.loadVersion) return;
     const run = currentRun();
     if (run?.mode) setMode(run.mode);
-    renderMessages();
+    renderMessages(true);
     renderActivity(run);
+    if (run?.status === "failed" && run.error) showError(run.error);
     if (!busy()) $("message").focus();
-  } catch (error) { if (version === state.loadVersion) showError(error.message); }
+  } catch (error) {
+    if (version !== state.loadVersion) return;
+    if (restoring && error.status === 404) {
+      try { localStorage.removeItem("cairo-session"); } catch (_) { /* Optional storage. */ }
+      showError();
+    } else showError(error.message);
+  }
 }
 
 function newChat() {
+  saveDraft();
   openMic?.stop();
   voice?.cancel();
   window.speechSynthesis?.cancel();
   ++state.loadVersion;
   state.session = null;
+  $("session-search").value = "";
+  setSessionFilter(false);
   $("chat-title").textContent = "Nova conversa";
-  $("message").value = "";
+  restoreDraft();
+  toggleSidebar(false);
   try { localStorage.removeItem("cairo-session"); } catch (_) { /* Optional preference persistence. */ }
   showError(); renderSessions(); renderMessages(); renderActivity(); $("message").focus();
 }
@@ -220,6 +269,14 @@ async function pollRun(sessionId, runId) {
       let run;
       try { run = await api(`/api/runs/${encodeURIComponent(runId)}`); errors = 0; }
       catch (error) {
+        if (error.status === 404) {
+          if (state.runs.get(sessionId)?.id === runId) state.runs.delete(sessionId);
+          if (state.session?.id === sessionId) {
+            renderMessages(); renderActivity();
+            showError("Esta execução não está mais no histórico. Reabra a conversa para conferir o estado atual.");
+          }
+          break;
+        }
         errors += 1;
         if (state.session?.id === sessionId) showError(`Conexão interrompida: ${error.message} Nova tentativa automática…`);
         await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 700 * errors)));
@@ -233,7 +290,7 @@ async function pollRun(sessionId, runId) {
           try {
             const session = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
             if (state.session?.id === sessionId && version === state.loadVersion) {
-              state.session = session;
+              mergeSessionHistory(session);
               $("chat-title").textContent = session.title || "Conversa";
               renderMessages();
             }
@@ -244,7 +301,7 @@ async function pollRun(sessionId, runId) {
             }
           }
           if (state.session?.id === sessionId && run.status === "completed" && run.result && $("speak-replies").checked) speakText(run.result);
-          if (state.session?.id === sessionId && run.error && run.status === "failed") { openMic?.stop(); showError(run.error); }
+          if (state.session?.id === sessionId && run.error && run.status === "failed") { if (openMic?.enabled) openMic.commandFailed(run.error); else showError(run.error); }
           if (state.session?.id === sessionId && run.status === "cancelled") { openMic?.stop(); showError(); }
         }
         await refreshSessions().catch(() => {});
@@ -258,7 +315,8 @@ async function pollRun(sessionId, runId) {
 async function sendMessage(event) {
   event.preventDefault();
   const message = $("message").value.trim();
-  if (!message || busy()) return;
+  if (!message || busy() || state.session?.archived) return;
+  const sourceDraftId = state.session?.id || "new";
   state.sending = true;
   updateControls(); showError();
   let sessionId;
@@ -269,12 +327,16 @@ async function sendMessage(event) {
     }
     sessionId = state.session.id;
     const run = await api("/api/runs", { method: "POST", body: JSON.stringify({ session_id: sessionId, message, mode: state.mode }) });
+    clearDraft(sessionId);
+    clearDraft(sourceDraftId);
     state.runs.set(sessionId, { ...run, mode: state.mode, events: [] });
     if (state.session?.id === sessionId) {
       state.session.messages.push({ role: "user", content: message });
       $("message").value = "";
+      $("draft-status").textContent = "";
+      resizeComposer();
       try { localStorage.setItem("cairo-session", sessionId); } catch (_) { /* Optional preference persistence. */ }
-      renderMessages(); renderActivity(currentRun());
+      renderMessages(true); renderActivity(currentRun());
     }
     pollRun(sessionId, run.id);
     await refreshSessions();
@@ -285,7 +347,7 @@ async function sendMessage(event) {
 $("chat-form").addEventListener("submit", sendMessage);
 $("new-chat").addEventListener("click", newChat);
 document.querySelectorAll(".mode").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
-document.querySelectorAll(".prompt-card").forEach((button) => button.addEventListener("click", () => { if (!busy()) { $("message").value = button.dataset.prompt; if (button.dataset.mode) setMode(button.dataset.mode); $("message").focus(); } }));
+document.querySelectorAll(".prompt-card").forEach((button) => button.addEventListener("click", () => { if (!busy()) { prepareDraft(button.dataset.prompt); if (button.dataset.mode) setMode(button.dataset.mode); } }));
 $("message").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); $("chat-form").requestSubmit(); } });
 document.addEventListener("keydown", (event) => { if (event.key.toLowerCase() === "n" && !event.ctrlKey && !event.metaKey && !event.altKey && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) newChat(); });
 $("cancel").addEventListener("click", async () => {
@@ -303,7 +365,7 @@ async function initialize() {
     const config = await api("/api/config");
     document.querySelector(".version").textContent = "V" + (config.version || "anterior");
     $("demo-banner").hidden = config.provider !== "demo";
-    $("model-label").textContent = `${config.provider} / ${config.model}`;
+    $("model-label").textContent = `${config.provider} / ${config.model || "modelo automático"}`;
     $("permission-label").textContent = config.full_file_access && config.allow_file_operations ? "Arquivos fora da workspace habilitados" : config.allow_write ? "Escrita permitida no workspace" : "Workspace em modo de leitura";
     $("permission-label").title = config.workspace || "";
     $("permission-label").textContent += config.allow_desktop ? " · Aplicativos habilitados" : " · Aplicativos desativados";
@@ -314,7 +376,7 @@ async function initialize() {
     await refreshSessions();
     let remembered;
     try { remembered = localStorage.getItem("cairo-session"); } catch (_) { /* Optional preference persistence. */ }
-    if (remembered && state.sessions.some((session) => session.id === remembered)) await openSession(remembered);
+    if (remembered) await openSession(remembered, true);
   } catch (error) { $("connection").textContent = "Sem conexão"; showError(`Não foi possível conectar ao Cairo. ${error.message}`); }
 }
 voice = new CairoVoice({
@@ -384,7 +446,7 @@ window.addEventListener("pagehide", () => window.speechSynthesis?.cancel());
 $("export-chat").addEventListener("click", async () => {
   if (!state.session) { showError("Abra uma conversa antes de exportar."); return; }
   try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.session.id)}`);
+    const session = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/export`);
     const text = JSON.stringify(session, null, 2);
     const url = URL.createObjectURL(new Blob([text], {type:"application/json;charset=utf-8"}));
     const link = document.createElement("a"); link.href = url; link.download = `cairo-${session.id}.json`;
@@ -439,6 +501,7 @@ setInterval(refreshReminders, 5000);
 function prepareDraft(text) {
   if (busy()) { showError("Aguarde a execução terminar ou pressione Parar para preparar outro pedido."); return; }
   openMic?.stop(); voice?.cancel();
+  if (state.session?.archived) newChat();
   $("message").value = text;
   $("message").focus();
   $("message").dispatchEvent(new Event("input", {bubbles:true}));
@@ -519,4 +582,141 @@ $("check-model").addEventListener("click", async () => {
     $("model-health").textContent = `${result.provider || "IA"}: ${result.status}. Modelo: ${result.selected_model || "padrão do gateway"}. ` + (result.ready ? "Pronto para uso segundo o catálogo/configuração." : result.error?.message || result.note || "Confira a configuração do modelo.");
   } catch (error) { $("model-health").textContent = error.message; }
   finally { button.disabled = false; }
+});
+
+// Preferences and drafts are local to this browser profile, keyed by conversation.
+function draftKey(id = state.session?.id || "new") { return "cairo-draft-" + id; }
+function saveDraft() {
+  if ($("message").disabled && !$("message").value) return;
+  try {
+    const value = $("message").value;
+    if (value) localStorage.setItem(draftKey(), value);
+    else localStorage.removeItem(draftKey());
+    $("draft-status").textContent = value ? "Rascunho salvo neste navegador" : "";
+  } catch (_) { $("draft-status").textContent = "Rascunho disponível apenas nesta aba"; }
+}
+function clearDraft(id) { try { localStorage.removeItem(draftKey(id)); } catch (_) { /* Optional storage. */ } }
+function restoreDraft() {
+  try { $("message").value = localStorage.getItem(draftKey()) || ""; }
+  catch (_) { $("message").value = ""; }
+  $("draft-status").textContent = $("message").value ? "Rascunho recuperado" : "";
+  resizeComposer();
+}
+function resizeComposer() {
+  $("message").style.height = "auto";
+  $("message").style.height = Math.min(180, $("message").scrollHeight) + "px";
+}
+$("message").addEventListener("input", () => { saveDraft(); resizeComposer(); });
+window.addEventListener("pagehide", saveDraft);
+restoreDraft();
+
+function toggleSidebar(open) {
+  $("sidebar").classList.toggle("is-open", open);
+  $("sidebar-toggle").setAttribute("aria-expanded", String(open));
+  $("sidebar-backdrop").hidden = !open || !window.matchMedia("(max-width:700px)").matches;
+}
+$("sidebar-toggle").addEventListener("click", () => toggleSidebar(!$("sidebar").classList.contains("is-open")));
+$("sidebar-backdrop").addEventListener("click", () => { toggleSidebar(false); $("sidebar-toggle").focus(); });
+window.addEventListener("resize", () => { if (!window.matchMedia("(max-width:700px)").matches) toggleSidebar(false); });
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault(); toggleSidebar(true); $("session-search").focus();
+  }
+  if (event.key === "Escape" && $("sidebar").classList.contains("is-open")) { toggleSidebar(false); $("sidebar-toggle").focus(); }
+});
+let searchTimer;
+$("session-search").addEventListener("input", () => {
+  ++state.searchVersion; clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => refreshSessions().catch(error => showError(error.message)), 250);
+});
+function setSessionFilter(archived) {
+  state.archived = archived;
+  for (const [id, active] of [["show-active", !archived], ["show-archived", archived]]) {
+    $(id).classList.toggle("selected", active); $(id).setAttribute("aria-pressed", String(active));
+  }
+  refreshSessions().catch(error => showError(error.message));
+}
+$("show-active").addEventListener("click", () => setSessionFilter(false));
+$("show-archived").addEventListener("click", () => setSessionFilter(true));
+async function updateSession(changes) {
+  if (!state.session) return;
+  const id = state.session.id;
+  const result = await api(`/api/sessions/${encodeURIComponent(id)}/update`, {method:"POST", body:JSON.stringify(changes)});
+  if (state.session?.id === id) {
+    Object.assign(state.session, result); $("chat-title").textContent = result.title;
+    renderMessages(); updateControls();
+  }
+  await refreshSessions();
+}
+$("pin-chat").addEventListener("click", async () => {
+  $("pin-chat").disabled = true;
+  try { await updateSession({pinned: !state.session.pinned}); }
+  catch (error) { showError(error.message); }
+  finally { updateControls(); }
+});
+$("archive-chat").addEventListener("click", async () => {
+  $("archive-chat").disabled = true;
+  try { const archived = !state.session.archived; await updateSession({archived}); setSessionFilter(archived); }
+  catch (error) { showError(error.message); }
+  finally { updateControls(); }
+});
+let renameSessionId = null;
+$("rename-chat").addEventListener("click", () => {
+  if (!state.session) return;
+  renameSessionId = state.session.id; $("rename-title").value = state.session.title;
+  $("rename-error").textContent = ""; $("rename-dialog").showModal(); $("rename-title").select();
+});
+$("rename-cancel").addEventListener("click", () => $("rename-dialog").close());
+$("rename-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.submitter; button.disabled = true;
+  try {
+    if (state.session?.id !== renameSessionId) throw new Error("A conversa mudou. Abra Renomear novamente.");
+    await updateSession({title: $("rename-title").value}); $("rename-dialog").close();
+  } catch (error) { $("rename-error").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("theme-toggle").textContent = theme === "light" ? "☾" : "☼";
+  $("theme-toggle").setAttribute("aria-label", theme === "light" ? "Ativar tema escuro" : "Ativar tema claro");
+}
+try { applyTheme(localStorage.getItem("cairo-theme") === "light" ? "light" : "dark"); } catch (_) { applyTheme("dark"); }
+$("theme-toggle").addEventListener("click", () => {
+  const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  applyTheme(theme); try { localStorage.setItem("cairo-theme", theme); } catch (_) { /* Optional preference. */ }
+});
+
+$("export-markdown").addEventListener("click", async () => {
+  if (!state.session) { showError("Abra uma conversa antes de exportar."); return; }
+  try {
+    const session = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/export`);
+    const text = "# " + session.title + "\n\n" + session.messages.filter(m => ["user", "assistant"].includes(m.role)).map(m => "## " + (m.role === "user" ? "Você" : "Cairo") + "\n\n" + m.content).join("\n\n---\n\n");
+    const url = URL.createObjectURL(new Blob([text], {type:"text/markdown;charset=utf-8"}));
+    const link = document.createElement("a"); link.href = url; link.download = `cairo-${session.id}.md`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { showError(error.message); }
+});
+
+// Keep secondary voice options available without occupying the writing area.
+const voiceSettings = node("details", "voice-settings");
+voiceSettings.append(node("summary", "", "Voz e escuta contínua"));
+const voiceRows = [...document.querySelectorAll(".voice-options, .voice-help")];
+voiceRows[0].before(voiceSettings); voiceRows.forEach(row => voiceSettings.append(row));
+let connectionChecking = false;
+async function checkConnection() {
+  if (connectionChecking || document.hidden) return;
+  connectionChecking = true;
+  try { await api("/api/health", {timeoutMs:5000}); $("connection").textContent = "Cairo conectado"; $("connection-dot").classList.add("connected"); }
+  catch (_) { $("connection").textContent = "Reconectando…"; $("connection-dot").classList.remove("connected"); }
+  finally { connectionChecking = false; }
+}
+setInterval(checkConnection, 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { checkConnection(); refreshReminders(); } });
+$("backup-history").addEventListener("click", async () => {
+  $("backup-history").disabled = true; $("backup-status").textContent = "Criando cópia…";
+  try { const result = await api("/api/backup", {method:"POST",body:"{}",timeoutMs:60000}); $("backup-status").textContent = "Histórico salvo em " + result.path; }
+  catch (error) { $("backup-status").textContent = error.message; }
+  finally { $("backup-history").disabled = false; }
 });

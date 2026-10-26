@@ -164,7 +164,8 @@ class CommandRuntimeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
-        self.runner = CommandRunner(FileRoots(root, root / "data"), True, 5)
+        # Native PowerShell startup can exceed five seconds on a busy Windows host.
+        self.runner = CommandRunner(FileRoots(root, root / "data"), True, 30)
 
     def test_real_cmd_powershell_and_exit_status(self):
         cmd = self.runner.run("cmd", "echo CAIRO_CMD_OK")
@@ -203,8 +204,9 @@ class CommandRuntimeTests(unittest.TestCase):
             self.runner.run("cmd", "echo no", cancelled=cancelled)["status"],
             "cancelled",
         )
-        self.runner.timeout = 5
+        self.runner.timeout = 30
         output = self.runner.run("powershell", "Write-Output ('x' * 100000)")
+        self.assertEqual(output["status"], "completed", output)
         self.assertTrue(output["truncated"])
         self.assertLessEqual(len(output["stdout"]), 32768)
 

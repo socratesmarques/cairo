@@ -1,12 +1,11 @@
 """Explicit desktop capabilities. No command strings or model-chosen executables."""
 
-import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
-from ctypes import wintypes
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -336,79 +335,40 @@ class DesktopController:
         )
         return result
 
-    def window_action(self, app: str, action: str) -> dict:
+    def window_action(self, app: str, action: str, **options) -> dict:
         self.require_enabled()
-        actions = {"minimize": 6, "maximize": 3, "restore": 9, "focus": 9}
-        if action not in actions:
-            raise ValueError("Ação de janela inválida")
-        executable = resolve_app(app)
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        callback_type = ctypes.WINFUNCTYPE(
-            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-        )
-        user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
-        user32.EnumWindows.restype = wintypes.BOOL
-        user32.IsWindowVisible.argtypes = [wintypes.HWND]
-        user32.IsWindowVisible.restype = wintypes.BOOL
-        user32.GetWindowThreadProcessId.argtypes = [
-            wintypes.HWND,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.QueryFullProcessImageNameW.argtypes = [
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            wintypes.LPWSTR,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        user32.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
-        user32.ShowWindowAsync.restype = wintypes.BOOL
-        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-        user32.SetForegroundWindow.restype = wintypes.BOOL
-        matches = []
-        expected = str(executable).casefold()
+        from cairo.integrations.window_layout import act_on_target, act_on_window
+        from cairo.integrations.window_native import WindowTarget
 
-        @callback_type
-        def visit(hwnd, _):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            handle = kernel32.OpenProcess(0x1000, False, pid.value)
-            if handle:
-                try:
-                    size = wintypes.DWORD(32768)
-                    buffer = ctypes.create_unicode_buffer(size.value)
-                    if (
-                        kernel32.QueryFullProcessImageNameW(
-                            handle, 0, buffer, ctypes.byref(size)
-                        )
-                        and buffer.value.casefold() == expected
-                    ):
-                        matches.append(hwnd)
-                finally:
-                    kernel32.CloseHandle(handle)
-            return True
+        token = re.fullmatch(r"win:(\d+):(\d+)", app)
+        if token:
+            return act_on_target(WindowTarget(label="janela selecionada", hwnd=int(token[1]), pid=int(token[2])), action, **options)
+        if app in catalog()["apps"]:
+            try:
+                executable = resolve_app(app)
+            except FileNotFoundError:
+                if not self.discover_apps:
+                    raise
+            else:
+                if self.discover_apps:
+                    from dataclasses import replace
+                    from cairo.integrations.app_discovery import find_app, window_identity
+                    try:
+                        target = window_identity(find_app(catalog()["apps"][app]["label"]))
+                    except (OSError, ValueError):
+                        pass
+                    else:
+                        target = replace(target, executable=target.executable or str(executable), label=catalog()["apps"][app]["label"])
+                        return act_on_target(target, action, **options)
+                return act_on_window(executable, catalog()["apps"][app]["label"], action, **options)
+        if not self.discover_apps:
+            raise ValueError("Aplicativo não cadastrado; descoberta automática desativada")
+        from cairo.integrations.app_discovery import find_app, window_identity
 
-        if not user32.EnumWindows(visit, 0):
-            raise OSError("Não foi possível consultar as janelas do Windows")
-        if not matches:
-            raise ValueError("Nenhuma janela compatível deste aplicativo está aberta")
-        hwnd = matches[0]
-        if not user32.ShowWindowAsync(hwnd, actions[action]):
-            raise OSError("Windows recusou a alteração da janela")
-        if action == "focus" and not user32.SetForegroundWindow(hwnd):
-            return {
-                "requested": True,
-                "message": "Janela restaurada; o Windows não permitiu colocá-la em primeiro plano. Use a barra de tarefas.",
-            }
-        return {
-            "requested": True,
-            "message": f"Solicitei a ação {action} na janela de {catalog()['apps'][app]['label']}.",
-        }
+        return act_on_target(window_identity(find_app(app)), action, **options)
+
+    def desktop_monitors(self) -> dict:
+        self.require_enabled()
+        from cairo.integrations.window_layout import list_monitors
+
+        return list_monitors()

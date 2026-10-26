@@ -25,3 +25,8 @@ workspace/*
 *.db-wal
 
 !workspace/BOAS-VINDAS.md
+# Local validation artifacts
+.test-tmp/
+.preview/
+.preview*/
+backups/

@@ -1,0 +1,46 @@
+"""Public contracts for local productivity tools."""
+
+# description, property types, required fields
+PRODUCTIVITY = {
+    "daily_overview": ("Summarize open/overdue tasks, active timers and pending reminders for this conversation.", {}, []),
+    "command_help": ("Show examples of direct Cairo commands. Optional query filters examples by category or text.", {"query": "string"}, []),
+    "task_create": ("Create a task in this conversation. priority: low, normal, high. Optional due: ISO date YYYY-MM-DD.", {"text": "string", "priority": "string", "due": "string"}, ["text"]),
+    "task_list": ("List tasks in this conversation. status: open, done, archived, all. Optional query searches titles.", {"status": "string", "query": "string"}, []),
+    "task_update": ("Update a task by its exact returned ID. status: open, done, archived. Optional title, priority and due (empty clears due).", {"id": "string", "text": "string", "priority": "string", "due": "string", "status": "string"}, ["id"]),
+    "note_create": ("Save a titled personal note in this conversation; independent of assistant memory.", {"title": "string", "text": "string"}, ["title", "text"]),
+    "note_list": ("Search personal notes by title/content, accent-insensitive. status: active, archived, all.", {"query": "string", "status": "string"}, []),
+    "note_read": ("Read the complete content of a personal note by its exact ID in this conversation. Lists return up to 30 previews; use this to read a full note.", {"id": "string"}, ["id"]),
+    "note_update": ("Edit a personal note by its exact returned ID, or archive/restore it. status: active, archived.", {"id": "string", "title": "string", "text": "string", "status": "string"}, ["id"]),
+    "focus_start": ("Start a persistent countdown for 1 second to 24 hours in this conversation. Only one unfinished timer per conversation. Alerts require the Cairo page open.", {"seconds": "integer", "text": "string"}, ["seconds"]),
+    "focus_action": ("Pause, resume, cancel or acknowledge an exact timer ID in this conversation. action: pause, resume, cancel, acknowledge.", {"id": "string", "action": "string"}, ["id", "action"]),
+    "focus_list": ("List recent persistent countdowns for this conversation, including finished alerts.", {}, []),
+    "calculate": ("Evaluate bounded arithmetic locally: + - * / // % ** and parentheses. Dot or decimal comma; no code execution.", {"expression": "string"}, ["expression"]),
+    "unit_convert": ("Convert compatible units locally: length, mass, volume, duration, temperature, speed and data bytes. Examples km/m, kg/g, c/f, km/h/m/s, MB/MiB. value is a decimal string.", {"value": "string", "source": "string", "target": "string"}, ["value", "source", "target"]),
+    "text_transform": ("Local text utilities. action: stats, uppercase, lowercase, title, trim, slug, unique_lines, sort_lines. Returns text or statistics without sending data to a model.", {"text": "string", "action": "string"}, ["text", "action"]),
+}
+
+GUIDE = [
+    ("Organização", "Adicione tarefa: Revisar o orçamento"),
+    ("Organização", "Minhas tarefas"),
+    ("Organização", "Meu dia"),
+    ("Notas", "Salve nota Ideias: Preparar uma apresentação curta"),
+    ("Notas", "Busque nas notas apresentação"),
+    ("Foco", "Inicie foco de 25 minutos para estudar"),
+    ("Foco", "Meus temporizadores"),
+    ("Lembretes", "Me lembre em 30 minutos de fazer uma pausa"),
+    ("Lembretes", "Me lembre amanhã às 9 de conferir minha agenda"),
+    ("Lembretes", "Liste meus lembretes"),
+    ("Utilidades", "Calcule (150 + 35) * 2"),
+    ("Utilidades", "Converta 2,5 km para m"),
+    ("Utilidades", "Conte palavras: Cairo facilita meu dia"),
+    ("Aplicativos", "Liste os aplicativos"),
+    ("Aplicativos", "Abra Visual Studio Code"),
+    ("Janelas", "Mova Chrome para o canto superior direito"),
+    ("Janelas", "Centralize o Chrome"),
+    ("Janelas", "Liste os monitores"),
+    ("Música", "Abra YouTube Music Desktop e toque a música Nuts"),
+    ("Música", "Próxima música"),
+    ("Arquivos", "Abra a pasta downloads"),
+    ("Pesquisa", "Pesquise receitas rápidas no Google"),
+    ("Pesquisa", "Como está o clima em São Paulo, Brasil?"),
+]

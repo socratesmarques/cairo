@@ -4,14 +4,16 @@ import json
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from cairo import __version__
 from cairo.config import Settings
 from cairo.core import log_event
 from cairo.core.diagnostics import Diagnostics
 from cairo.models import ModelError
+from cairo.memory.transfers import MAX_IMPORT_BYTES
 from cairo.orchestrator import Orchestrator
+from cairo.tools.productivity_actions import PRODUCTIVITY, GUIDE
 
 
 class Server(ThreadingHTTPServer):
@@ -133,8 +135,22 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/reminders":
                 self.send(200, app.reminders.list())
+            elif path == "/api/productivity":
+                params = parse_qs(urlsplit(self.path).query)
+                sid = params.get("session_id", [""])[0]
+                self.send(200, app.tools.productivity.snapshot(sid))
+            elif path == "/api/commands":
+                self.send(200, [{"category": category, "command": command} for category, command in GUIDE])
+            elif path == "/api/focus-alerts":
+                self.send(200, app.tools.productivity.alerts())
             elif path == "/api/sessions":
-                self.send(200, app.memory.sessions())
+                params = parse_qs(urlsplit(self.path).query)
+                self.send(200, app.memory.sessions(params.get("q", [""])[0], params.get("archived", ["0"])[0] == "1", int(params.get("offset", ["0"])[0])))
+            elif path.startswith("/api/sessions/") and path.endswith("/export"):
+                self.send(200, app.memory.export_session(path.split("/")[-2]))
+            elif path.startswith("/api/sessions/") and path.endswith("/messages"):
+                params = parse_qs(urlsplit(self.path).query)
+                self.send(200, app.memory.older_messages(path.split("/")[-2], int(params.get("before", ["0"])[0])))
             elif path.startswith("/api/sessions/"):
                 self.send(200, app.memory.session(path.removeprefix("/api/sessions/")))
             elif path.startswith("/api/runs/"):
@@ -145,6 +161,11 @@ class Handler(BaseHTTPRequestHandler):
                 "/static/app.js",
                 "/static/voice.js",
                 "/static/client.js",
+                "/static/markdown.js",
+                "/static/daily.css",
+                "/static/history.js",
+                "/static/productivity.js",
+                "/static/productivity.css",
             }:
                 filename = "index.html" if path == "/" else path.split("/")[-1]
                 file = Path(__file__).parent.parent / "web" / filename
@@ -160,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(502, {"error": exc.as_dict()})
         except KeyError as exc:
             self.send(404, {"error": str(exc)})
+        except ValueError as exc:
+            self.send(400, {"error": str(exc)})
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (OSError, sqlite3.Error):
@@ -193,9 +216,11 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed(mutation=True):
             return
         try:
+            path = urlsplit(self.path).path
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 65536 or self.headers.get("Transfer-Encoding"):
-                self.send(413, {"error": "Envie um corpo JSON de até 64 KB"})
+            maximum = MAX_IMPORT_BYTES if path == "/api/sessions/import" else 65536
+            if not 0 < size <= maximum or self.headers.get("Transfer-Encoding"):
+                self.send(413, {"error": "Importações aceitam até 8 MB; demais pedidos, até 64 KB"})
                 return
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
@@ -204,6 +229,18 @@ class Handler(BaseHTTPRequestHandler):
             app = self.server.app
             if path == "/api/sessions":
                 self.send(201, app.memory.create_session())
+            elif path == "/api/productivity":
+                if set(body) != {"session_id", "tool", "arguments"} or not isinstance(body["session_id"], str) or not isinstance(body["tool"], str) or body["tool"] not in PRODUCTIVITY:
+                    raise ValueError("Informe conversa, ferramenta e argumentos válidos")
+                result = json.loads(app.tools.execute(body["tool"], body["arguments"], "MasterAgent", body["session_id"]))
+                self.send(200 if result["ok"] else 400, result)
+            elif path == "/api/sessions/import":
+                self.send(201, app.memory.import_session(body))
+            elif path == "/api/backup":
+                self.send(201, app.memory.backup())
+            elif path.startswith("/api/sessions/") and path.endswith("/update"):
+                with app.lock:
+                    self.send(200, app.memory.update_session(path.split("/")[-2], body))
             elif path == "/api/reminders":
                 self.send(
                     201,
@@ -211,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/reminders/dismiss":
                 self.send(200, app.reminders.dismiss(body["id"], body["session_id"]))
+            elif path == "/api/reminders/snooze":
+                self.send(200, app.reminders.snooze(body["id"], body["session_id"], body["minutes"]))
             elif path == "/api/runs":
                 sid, message, mode = (
                     body.get("session_id"),
@@ -226,9 +265,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(404, {"error": "Rota não encontrada"})
         except KeyError as exc:
             self.send(404, {"error": str(exc)})
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
             self.send(
-                400, {"error": "Dados inválidos; confira mensagem, conversa e modo"}
+                400, {"error": str(exc) if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else "Dados inválidos; confira os campos enviados"}
             )
         except RuntimeError as exc:
             self.send(409, {"error": str(exc)})

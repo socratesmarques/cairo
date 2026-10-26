@@ -13,6 +13,38 @@ from cairo.models.errors import ModelError
 
 
 class APITests(unittest.TestCase):
+    def test_daily_api_validation_isolation_and_assets(self):
+        _, first = self.post("/api/sessions", {})
+        _, second = self.post("/api/sessions", {})
+        sid = first["id"]
+        def invoke(name, args, session=sid):
+            return self.post("/api/productivity", {"session_id":session,"tool":name,"arguments":args})
+        status, result = invoke("task_create", {"text":"API task"})
+        self.assertEqual(status,200)
+        item = result["result"]
+        self.assertEqual(invoke("task_update", {"id":item["id"],"text":"hijack"}, second["id"])[0],400)
+        self.assertEqual(invoke("run_command", {"shell":"cmd","command":"echo no"})[0],400)
+        self.assertEqual(invoke("focus_start", {"seconds":True})[0],400)
+        self.assertEqual(invoke("task_create", ["bad"])[0],400)
+        status, _, body = self.request("GET", "/api/productivity?session_id="+sid)
+        self.assertEqual(status,200)
+        self.assertEqual(json.loads(body)["tasks"][0]["text"],"API task")
+        for path in ("/api/commands","/api/focus-alerts","/static/productivity.js","/static/productivity.css"):
+            self.assertEqual(self.request("GET",path)[0],200)
+        self.assertEqual(self.request("POST","/api/productivity",{})[0],403)
+
+    def test_daily_commands_execute_without_model_or_desktop(self):
+        _, session = self.post("/api/sessions", {})
+        for message, fragment in (("Adicione tarefa: Preparar a reunião", "Tarefa salva"), ("Calcule (25+5)*3", "90"), ("Converta 2,5 km para m", "2500"), ("Meu dia", "1 tarefas abertas")):
+            status, run = self.post("/api/runs", {"session_id":session["id"],"message":message,"mode":"normal"})
+            self.assertEqual(status,202)
+            for _ in range(100):
+                current = self.server.app.memory.run(run["id"])
+                if current["status"] in {"completed","failed"}: break
+                time.sleep(.02)
+            self.assertEqual(current["status"],"completed", current)
+            self.assertIn(fragment,current["result"])
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -105,6 +137,45 @@ class APITests(unittest.TestCase):
     def test_config_never_contains_credentials(self):
         _, _, raw = self.request("GET", "/api/config")
         self.assertNotIn("api_key", json.loads(raw))
+
+    def test_import_and_older_messages_boundaries(self):
+        document = {"title": "Importada", "messages": [{"role": "user", "content": "x" * 70000}]}
+        status, session = self.post("/api/sessions/import", document)
+        self.assertEqual(status, 201)
+        sid = session["id"]
+        self.assertEqual(self.request("POST", "/api/sessions/import", document)[0], 403)
+        self.assertEqual(self.post("/api/sessions/import", {"title": "bad", "messages": [{"role": "system", "content": "unsafe"}]})[0], 400)
+        message = self.server.app.memory.session(sid)["messages"][0]
+        status, _, raw = self.request("GET", f"/api/sessions/{sid}/messages?before={message['id'] + 1}")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(raw)["messages"]), 1)
+        self.assertEqual(self.request("GET", f"/api/sessions/{sid}/messages?before=-1")[0], 400)
+        self.assertEqual(self.request("GET", "/api/sessions?offset=-1")[0], 400)
+        self.assertEqual(self.request("GET", "/static/history.js")[0], 200)
+
+    def test_session_organization_export_and_backup(self):
+        _, session = self.post("/api/sessions", {})
+        sid = session["id"]
+        self.server.app.memory.add_message(sid, "user", "planejamento único")
+        status, renamed = self.post(f"/api/sessions/{sid}/update", {"title": "Projeto Cairo", "pinned": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(renamed["title"], "Projeto Cairo")
+        self.assertEqual(self.request("POST", f"/api/sessions/{sid}/update", {"title": "unsafe"})[0], 403)
+        self.assertEqual(self.post(f"/api/sessions/{sid}/update", {"archived": "yes"})[0], 400)
+        _, _, raw = self.request("GET", "/api/sessions?q=planejamento")
+        self.assertIn(sid, [item["id"] for item in json.loads(raw)])
+        self.post(f"/api/sessions/{sid}/update", {"archived": True})
+        self.assertEqual(self.post("/api/runs", {"session_id": sid, "message": "oi"})[0], 409)
+        _, _, raw = self.request("GET", "/api/sessions?archived=1")
+        self.assertIn(sid, [item["id"] for item in json.loads(raw)])
+        status, _, raw = self.request("GET", f"/api/sessions/{sid}/export")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(raw)["messages"]), 1)
+        self.assertEqual(self.post("/api/backup", {})[0], 201)
+        self.assertEqual(self.request("POST", "/api/backup", {})[0], 403)
+        self.assertEqual(self.request("GET", "/api/sessions?q=" + "x" * 201)[0], 400)
+        for path in ("/static/daily.css", "/static/markdown.js"):
+            self.assertEqual(self.request("GET", path)[0], 200)
 
     def test_ai_diagnostics(self):
         with patch.object(

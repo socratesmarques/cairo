@@ -92,6 +92,7 @@ class CairoOpenMic {
   constructor({ Recognition, blocked, onText, onCommand, onState, onError, intervalMs = 600 }) {
     this.enabled = false; this.timer = null; this.blocked = blocked;
     this.onState = onState; this.intervalMs = intervalMs;
+    this.onError = onError;
     this.voice = new CairoVoice({Recognition, onText,
       onState: (state) => { if (this.enabled) onState(state === "idle" ? "waiting" : state); },
       onError: (message, code) => {
@@ -118,6 +119,10 @@ class CairoOpenMic {
     this.voice.start("");
   }
   pause() { this.voice.cancel(); }
+  commandFailed(message) {
+    this.onError(message + (this.enabled ? " A escuta continua ativa; pode dizer outro comando." : ""));
+    if (this.enabled) this.onState("waiting");
+  }
   stop() {
     this.enabled = false;
     clearInterval(this.timer); this.timer = null;

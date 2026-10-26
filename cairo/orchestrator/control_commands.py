@@ -29,7 +29,7 @@ def interaction_requested(message: str) -> bool:
         return False
     return bool(
         re.search(
-            r"(?:^|\be\s+)(?:cairo[, ]+)?(?:por favor[, ]+)?(?:(?:eu )?quero que (?:voce )?|(?:voce )?(?:pode|poderia|consegue)\s+)?(?:clique|clicar|digite|digitar|preencha|preencher|pressione|pressionar|selecione|selecionar|minimize|maximize|restaure|foque|feche|fechar|controle|controlar|navegue|navegar|role|rolar|toque|tocar|reproduza|reproduzir|click|fill|press|close)\b",
+            r"(?:^|\be\s+)(?:cairo[, ]+)?(?:por favor[, ]+)?(?:(?:eu )?quero que (?:voce )?|(?:voce )?(?:pode|poderia|consegue)\s+)?(?:clique|clicar|digite|digitar|preencha|preencher|pressione|pressionar|selecione|selecionar|minimize|maximize|restaure|foque|feche|fechar|controle|controlar|navegue|navegar|role|rolar|toque|tocar|reproduza|reproduzir|mova|mover|coloque|coloca|colocar|posicione|posicionar|centralize|ponha|click|fill|press|close)\b",
             text,
         )
     )

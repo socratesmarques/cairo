@@ -102,3 +102,15 @@ test('speaking pauses capture and blocks restart until playback ends', () => {
     f.unblock(); f.mic.tick(); assert.equal(f.instances.length,2);}
   finally {f.mic.stop();}
 });
+
+test('missing application reports the failure and keeps listening for the next command', () => {
+  const f = openFixture();
+  try {
+    f.mic.start(); f.say('abra aplicativo inexistente');
+    f.mic.commandFailed('Aplicativo não encontrado');
+    assert.equal(f.mic.enabled, true);
+    assert.match(f.errors.at(-1), /escuta continua ativa/);
+    f.unblock(); f.mic.tick(); f.say('abra o Visual Studio Code');
+    assert.deepEqual(f.commands, ['abra aplicativo inexistente', 'abra o Visual Studio Code']);
+  } finally { f.mic.stop(); }
+});
