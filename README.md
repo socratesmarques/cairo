@@ -1,5 +1,5 @@
 # Cairo
-
+# prox atualz. 0.9
 ## Novidades — versão 0.8
 
 A **Central do dia** reúne tarefas com prioridade e prazo, notas editáveis, agenda com adiamento, temporizador de foco persistente, calculadora, conversão de unidades e ferramentas de texto. Abra pela barra lateral; **Explorar comandos** mostra exemplos pesquisáveis. As funções locais funcionam sem IA e os dados ficam separados por conversa.
