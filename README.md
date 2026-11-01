@@ -1,7 +1,7 @@
 # Cairo
 # prox atualz. 0.9
 ## Novidades — versão 0.8
-
+##########
 A **Central do dia** reúne tarefas com prioridade e prazo, notas editáveis, agenda com adiamento, temporizador de foco persistente, calculadora, conversão de unidades e ferramentas de texto. Abra pela barra lateral; **Explorar comandos** mostra exemplos pesquisáveis. As funções locais funcionam sem IA e os dados ficam separados por conversa.
 
 Exemplos: Adicione tarefa: Revisar orçamento, Meu dia, Salve nota Ideias: Preparar uma apresentação, Inicie foco de 25 minutos, Calcule (150 + 35) * 2, Converta 2,5 km para m. Veja [o guia da versão 0.8](docs/daily-0.8.md) para limites, exportação e alertas.
